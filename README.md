@@ -125,11 +125,4 @@ Once the ESDG is built, finding the **fastest journey** is much simpler.
 
 ---
 
-## 📖 References
-
-* Original ESDG Algorithm Research Paper (refer to your course/project documentation)
-* Graph Theory & Pathfinding Algorithms (BFS, DAG search)
-
----
-
 💡 With the ESDG approach, **messy real-world schedules** are transformed into **elegant graph problems**, making optimal route planning both fast and reliable.
