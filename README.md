@@ -121,6 +121,12 @@ After extensive optimization and profiling, the following conclusions were reach
 
 3.  **True Computational Hotspot:** With the artificial bottlenecks removed, profiling confirms that the **`find_fastest_paths` function** in `serial_esdg_fpd.py` is the main computational core, consuming **~66% of the execution time**.
 
+run_single_experiment (runtime: 0.280s): This is the total time for the entire experiment. It's at the top because it's the main function we are profiling.
+
+find_fastest_paths (runtime: 0.171s): This is the first function called by run_single_experiment in the list. This tells you that out of the total 0.280 seconds, a massive 0.171 seconds (about 61%) was spent inside the actual FPD algorithm.
+
+load_esd_graph_from_json (runtime: 0.075s): This is the next major function called by run_single_experiment. It shows that loading and parsing the cached JSON file also takes a noticeable amount of time.
+
 **Conclusion:** The analysis successfully isolated the true hotspot. The next logical step, parallelization, should be focused on the `find_fastest_paths` algorithm to gain the most significant performance improvements.
 
 ---
@@ -128,9 +134,27 @@ After extensive optimization and profiling, the following conclusions were reach
 ## 📂 Project Structure
 
 ```
-├── esd_transformer.py   # Builds the ESDG from raw schedule data
-├── serial_esdg_fpd.py   # Fastest path discovery on the ESDG
-├── README.md            # Documentation
+Project/
+├── Datasets/
+│   └── network_temporal_day.csv
+├── ESD_Graph/
+│   ├── structures/
+│   └── esd_transformer.py
+├── FPD_Algorithm/
+│   └── serial_esdg_fpd.py
+├── analysis/
+│   ├── scalability_analyzer.py
+│   ├── detailed_profiler.py
+│   ├── path_analyzer.py
+│   └── visualizer.py
+├── cache/
+│   └── largest_esd_graph.json  (auto-generated)
+├── utils/
+│   └── graph_caching.py
+├── main.py
+├── find_route.py
+├── .gitignore
+└── README.md
 ```
 
 ---
