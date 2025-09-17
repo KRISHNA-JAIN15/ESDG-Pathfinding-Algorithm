@@ -25,7 +25,7 @@ def visualize_top_paths(
     for dest, time in sorted_destinations:
         if dest != source_vertex and time != float('inf'):
             top_10.append(dest)
-        if len(top_10) == 20:
+        if len(top_10) == 10:
             break
             
     if not top_10:

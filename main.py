@@ -67,5 +67,5 @@ def run_pipeline(dataset_path: str, source_node: str, num_rows: int = None):
 if __name__ == "__main__":
     DATASET_FILE = "Datasets/network_temporal_day.csv"
     SOURCE_VERTEX = "2421"
-    NUM_ROWS_TO_PROCESS = 20000
+    NUM_ROWS_TO_PROCESS = 100000
     run_pipeline(DATASET_FILE, SOURCE_VERTEX, num_rows=NUM_ROWS_TO_PROCESS)
