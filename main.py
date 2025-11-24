@@ -2,6 +2,8 @@ import pandas as pd
 import logging
 from ESD_Graph.esd_transformer import transform_temporal_to_esd
 from FPD_Algorithm.serial_esdg_fpd import SerialESDG_FPD
+from FPD_Algorithm.parallel_esdg_fpd import ParallelESDG_FPD
+
 from utils.graph_caching import save_esd_graph_to_json, load_esd_graph_from_json
 from analysis.visualizer import visualize_top_paths
 
@@ -29,7 +31,11 @@ def run_pipeline(dataset_path: str, source_node: str, num_rows: int = None):
 
 
     print("\n" + "="*50); print("STEP 3: COMPUTING FASTEST PATH DURATION (FPD)"); print("="*50)
-    fpd_solver = SerialESDG_FPD(esd_graph)
+
+
+    # fpd_solver = SerialESDG_FPD(esd_graph)
+    fpd_solver = ParallelESDG_FPD(esd_graph)
+
     journey_times, fastest_paths = fpd_solver.find_fastest_paths(source_node)
 
     # --- 4. Display Results in Console (Corrected Section) ---
@@ -67,5 +73,5 @@ def run_pipeline(dataset_path: str, source_node: str, num_rows: int = None):
 if __name__ == "__main__":
     DATASET_FILE = "Datasets/network_temporal_day.csv"
     SOURCE_VERTEX = "2421"
-    NUM_ROWS_TO_PROCESS = 100000
+    NUM_ROWS_TO_PROCESS = 10000
     run_pipeline(DATASET_FILE, SOURCE_VERTEX, num_rows=NUM_ROWS_TO_PROCESS)

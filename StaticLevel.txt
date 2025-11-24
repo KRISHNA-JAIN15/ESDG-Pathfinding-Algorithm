@@ -1,0 +1,153 @@
+Why Levels in the ESDG Are Static and Cacheable
+1. Why Levels Are Static (and Safe to Cache)
+
+In a standard graph—such as a classic road network—“Level 1” typically means one hop away from the chosen start node. Because the notion of distance is relative to the start node, changing the start point changes the levels.
+
+However, the Expanded Schedule Dependency Graph (ESDG) does not work like a normal road graph. It is a Directed Acyclic Graph (DAG) that represents the flow of time and schedule dependencies. This changes everything.
+
+Key Characteristics of ESDG
+
+Nodes represent trips, e.g., a specific bus at a specific departure time (“Bus A at 09:00”).
+
+Edges represent transfers, e.g., “You can transfer from Bus A at 09:00 to Bus B at 09:15.”
+
+Because time always moves forward, the ESDG is a DAG, allowing a global topological ordering.
+
+How Levels Are Defined in the ESDG
+
+The “level” of a node is determined solely by the structure of the schedule graph, not by any source vertex.
+
+Level 1 = trips with no incoming transfers
+(e.g., first trips of the day, depot departures)
+
+Level 2 = trips that depend directly on Level 1 trips
+
+Level N = trips that depend on earlier levels
+
+This forms a global hierarchy based on the timeline of dependencies.
+A trip at 09:00 AM will always appear before a trip at 05:00 PM in the topological ordering. This ordering does not change, regardless of the query starting point.
+
+Therefore, ESDG levels are completely static.
+You compute them once, and they remain valid for all future queries.
+
+2. Evidence from the Research Papers
+
+The referenced papers explicitly confirm that:
+
+A. The ESDG is built once and independent of the query source
+
+Paper statement:
+
+“Without loss of generality, we assume that 𝛁G is constructed in preprocessing time as it is independent of a source vertex and is required to construct exactly once.”
+
+This means:
+
+ESDG construction does not depend on a source stop.
+
+You build the graph once.
+
+You cache it and reuse it for all queries.
+
+B. The definition of Level depends only on parents
+
+The paper defines Level(x) as:
+
+If a node has no parents → Level(x) = 1
+
+Else → Level(x) = 1 + max(Level(parent_nodes))
+
+This definition clearly depends only on the graph structure and parent relationships, not on any chosen start node.
+
+Thus, level computation is a pure preprocessing task.
+
+3. How These Levels Are Used During a Query
+
+When handling a user query—for example,
+“Find fastest route starting from Stop A”—the algorithm proceeds as follows:
+
+Step 1: Load Cached ESDG
+
+You load the precomputed structure:
+
+Nodes
+
+Edges
+
+Levels (1 to N)
+
+Step 2: Identify Source Nodes for the Query
+
+From the full ESDG, you select only the trips that correspond to:
+
+The user’s start stop
+
+The user’s chosen departure time
+
+These nodes might be:
+
+Some in Level 5
+
+Some in Level 20
+
+Some in even higher or lower levels
+
+Step 3: Level-Order Traversal
+
+Algorithms like the “Level Order algorithm” process nodes level by level.
+
+But for your specific query:
+
+Levels 1–4 may have no reachable nodes, so the algorithm simply ignores them.
+
+Only the levels reachable from the identified source trips are processed.
+
+Static vs Dynamic Behavior
+
+Static: The level of a node (e.g., Level(Trip X) = 5) never changes.
+
+Dynamic: The status "Reachable or Not Reachable" changes depending on where the user starts.
+
+Thus the graph stays the same, but the reachable slice of the graph varies per query.
+
+4. Conclusion for Your Implementation
+A. You should absolutely cache levels in JSON
+
+Your preprocessing step should store:
+
+ESDG nodes
+
+Parent relationships
+
+Transfer edges
+
+Precomputed levels
+
+This perfectly aligns with the preprocessing phase described in the papers.
+
+B. You do NOT need to recompute levels per source node
+
+Levels are a property of the entire schedule graph.
+
+Levels do not depend on the start stop used in the query.
+
+Levels are reused across all searches.
+
+C. During a query
+
+The algorithm loads static levels.
+
+It identifies the source nodes corresponding to the user.
+
+It then performs a level-order traversal, skipping irrelevant levels automatically.
+
+Final Summary
+
+ESDG is a DAG structured around time, not origin points.
+
+Levels are computed using parent relationships → 100% graph-structural.
+
+The papers confirm ESDG is built once, independent of query source.
+
+During a query, static levels remain unchanged; only reachability is dynamic.
+
+Your approach of saving levels to JSON is correct, efficient, and exactly matches the research methodology.

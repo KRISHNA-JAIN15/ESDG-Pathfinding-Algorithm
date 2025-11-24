@@ -4,88 +4,96 @@ import logging
 from ESD_Graph.structures.esd_graph import ESD_graph, ESD_Node
 
 CACHE_DIR = "cache"
-CACHE_FILENAME = os.path.join(CACHE_DIR, "largest_esd_graph.json")
 
-
-def _load_cache_file():
-    """Helper to load the cache file if it exists."""
-    if not os.path.exists(CACHE_FILENAME):
-        return None
-    try:
-        with open(CACHE_FILENAME, 'r') as f:
-            return json.load(f)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return None
-
+def _get_cache_filename(num_rows: int):
+    """Returns the specific cache filename for a given number of rows."""
+    return os.path.join(CACHE_DIR, f"esd_graph_{num_rows}.json")
 
 def save_esd_graph_to_json(graph: ESD_graph, num_rows: int):
     """
-    Save the graph only if it's strictly larger than what is already cached.
-    This way, the cache always holds the largest graph ever built.
+    Save the graph to a specific JSON file for the given number of rows.
+    Accuracy Fix: We save specific graphs for specific dataset sizes because
+    ESDG edges depend on the global set of trips (Condition 2).
     """
     if not os.path.exists(CACHE_DIR):
         os.makedirs(CACHE_DIR)
 
-    cached_data = _load_cache_file()
-    cached_rows = cached_data['metadata'].get('num_rows', 0) if cached_data else 0
+    cache_filename = _get_cache_filename(num_rows)
 
-    # 🚫 Do NOT overwrite with smaller graphs
-    if num_rows <= cached_rows:
-        logging.info(
-            f"Skipping save. New graph ({num_rows} rows) "
-            f"is not larger than cached graph ({cached_rows} rows)."
-        )
+    if os.path.exists(cache_filename):
+        logging.info(f"Cache file {cache_filename} already exists. Skipping save to avoid overhead.")
         return
 
-    logging.info(f"Caching new LARGEST graph with {num_rows} rows at {CACHE_FILENAME}")
+    logging.info(f"Caching graph with {num_rows} rows at {cache_filename}")
 
+    # Format requirement: nodes must have (u, v, t, a) attributes
     data_to_save = {
         "metadata": {"num_rows": num_rows},
         "graph_data": {
-            "nodes": {nid: node.__dict__ for nid, node in graph.nodes.items()},
+            "nodes": {
+                nid: {
+                    "original_edge_id": node.original_edge_id,
+                    "u": node.u,
+                    "v": node.v,
+                    "t": node.t,
+                    "a": node.a,
+                    # Maintain other attributes if necessary, but ensure required ones are present
+                } for nid, node in graph.nodes.items()
+            },
             "adj": graph.adj,
             "levels": graph.levels
         }
     }
 
-    with open(CACHE_FILENAME, 'w') as f:
-        json.dump(data_to_save, f, indent=4)
-    logging.info("Graph successfully cached.")
+    try:
+        with open(cache_filename, 'w') as f:
+            json.dump(data_to_save, f, indent=4)
+        logging.info("Graph successfully cached.")
+    except IOError as e:
+        logging.error(f"Failed to write cache file: {e}")
 
 
 def load_esd_graph_from_json(num_rows: int) -> ESD_graph | None:
     """
-    Load the cached graph if it is large enough to satisfy the request.
-    Always uses the largest cached graph (never downsamples).
+    Load the cached graph for the specific number of rows.
+    Performance Fix: Only opens the specific file needed, avoiding
+    bottlenecks from reading larger-than-needed files.
     """
-    cached_data = _load_cache_file()
-    if not cached_data:
-        logging.info("No cache found, will need to build new graph.")
+    cache_filename = _get_cache_filename(num_rows)
+
+    if not os.path.exists(cache_filename):
+        logging.info(f"No specific cache found for {num_rows} rows at {cache_filename}.")
         return None
 
-    cached_rows = cached_data.get('metadata', {}).get('num_rows', 0)
+    logging.info(f"Cache hit. Loading graph from {cache_filename}...")
 
-    # ✅ If cache is larger, it's still valid because data is stored in order
-    if cached_rows < num_rows:
-        logging.info(
-            f"Cache miss. Requested {num_rows} rows, "
-            f"but cache only has {cached_rows} rows."
-        )
+    try:
+        with open(cache_filename, 'r') as f:
+            cached_data = json.load(f)
+    except (json.JSONDecodeError, IOError) as e:
+        logging.error(f"Error loading cache file: {e}")
         return None
 
-    logging.info(
-        f"Cache hit. Using largest graph with {cached_rows} rows "
-        f"(satisfies request for {num_rows})."
-    )
+    graph_data = cached_data.get('graph_data')
+    if not graph_data:
+        logging.error("Invalid cache format: 'graph_data' missing.")
+        return None
 
-    graph_data = cached_data['graph_data']
     esd_graph = ESD_graph()
     esd_graph.adj = {int(k): v for k, v in graph_data["adj"].items()}
     esd_graph.levels = {int(k): v for k, v in graph_data["levels"].items()}
 
     for node_id_str, node_attrs in graph_data["nodes"].items():
         node_id = int(node_id_str)
-        node = ESD_Node(**node_attrs)
+        # Ensure the loaded data matches the ESD_Node structure explicitly
+        # The paper requires attributes (u, v, t, a)
+        node = ESD_Node(
+            original_edge_id=node_attrs["original_edge_id"],
+            u=node_attrs["u"],
+            v=node_attrs["v"],
+            t=node_attrs["t"],
+            a=node_attrs["a"]
+        )
         esd_graph.nodes[node_id] = node
 
     return esd_graph
@@ -94,8 +102,8 @@ def load_esd_graph_from_json(num_rows: int) -> ESD_graph | None:
 def get_or_build_esd_graph(num_rows: int, builder_fn) -> ESD_graph:
     """
     Unified API:
-    1. Try to load from cache (if large enough).
-    2. Otherwise build using builder_fn(num_rows) and update cache.
+    1. Try to load from specific cache.
+    2. Otherwise build using builder_fn(num_rows) and save to cache.
     
     Args:
         num_rows (int): Number of rows requested.
@@ -111,5 +119,7 @@ def get_or_build_esd_graph(num_rows: int, builder_fn) -> ESD_graph:
 
     logging.info(f"Building new graph with {num_rows} rows...")
     graph, built_rows = builder_fn(num_rows)
+    
+    # Ensure we save exactly what was requested/built
     save_esd_graph_to_json(graph, built_rows)
     return graph

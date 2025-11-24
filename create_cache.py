@@ -3,27 +3,21 @@ import sys
 import os
 import pandas as pd
 import logging
-import json # Import json to read cache metadata
+import json
 
 # Add project root to path to allow imports
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 from ESD_Graph.esd_transformer import transform_temporal_to_esd
-from utils.graph_caching import save_esd_graph_to_json, CACHE_FILENAME # Import the constant
+from utils.graph_caching import save_esd_graph_to_json, _get_cache_filename
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def get_cached_rows():
-    """Reads only the metadata from the cache file to check its size."""
-    if not os.path.exists(CACHE_FILENAME):
-        return 0
-    try:
-        with open(CACHE_FILENAME, 'r') as f:
-            data = json.load(f)
-            return data.get('metadata', {}).get('num_rows', 0)
-    except (json.JSONDecodeError, FileNotFoundError):
-        return 0
+def check_specific_cache_exists(num_rows: int):
+    """Checks if the specific cache file for num_rows exists."""
+    filename = _get_cache_filename(num_rows)
+    return os.path.exists(filename)
 
 def build_and_cache_graph(dataset_path: str, num_rows: int):
     """
@@ -34,10 +28,10 @@ def build_and_cache_graph(dataset_path: str, num_rows: int):
     print("="*60)
 
     # --- 1. Check Cache Before Doing Any Work ---
-    cached_rows = get_cached_rows()
-    if cached_rows >= num_rows:
-        logging.info(f"Operation aborted. Cache already contains a graph with {cached_rows} rows, which satisfies the request for {num_rows}.")
-        print("\n✅ No action needed. A sufficiently large cache already exists.")
+    # Optimization: Check specific file existence to avoid IO bottleneck
+    if check_specific_cache_exists(num_rows):
+        logging.info(f"Operation aborted. Cache already exists for {num_rows} rows.")
+        print(f"\n✅ No action needed. Cache found.")
         return
 
     # --- 2. Load and Prepare Data (only if necessary) ---
@@ -65,7 +59,6 @@ def build_and_cache_graph(dataset_path: str, num_rows: int):
     logging.info("Transformation complete.")
 
     # --- 4. Save to Cache ---
-    # The save function will still perform its own check, but this is good practice
     save_esd_graph_to_json(esd_graph, num_rows)
     
     print("\n✅ Cache creation process finished.")
