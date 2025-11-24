@@ -30,8 +30,8 @@ class SerialESDG_FPD:
         """Helper to get a set of all unique vertex IDs."""
         vertices = set()
         for node in self.esd_graph.nodes.values():
-            vertices.add(node.u)
-            vertices.add(node.v)
+            vertices.add(str(node.u))  # Convert to string for consistent interface
+            vertices.add(str(node.v))
         return vertices
 
     def find_fastest_paths(self, source_vertex_s: str):
@@ -62,30 +62,49 @@ class SerialESDG_FPD:
         visited_esdg_nodes = set()
 
         # 2. Identify and Sort Source Nodes
+        # Fix: Compare string with string since node.u is a string (not int)
         source_nodes_in_esdg = [
             node for node in self.esd_graph.nodes.values() if node.u == source_vertex_s
         ]
         source_nodes_in_esdg.sort(key=lambda node: node.t, reverse=True)
         logging.info(f"Found and sorted {len(source_nodes_in_esdg)} ESDG source nodes.")
+        
+        if len(source_nodes_in_esdg) == 0:
+            logging.warning(f"No source nodes found for vertex {source_vertex_s}. Check vertex ID format.")
+            return journey_times, fastest_paths
+        
+        # Debug: Show source departure times for comparison with GPU
+        departure_times = [node.t for node in source_nodes_in_esdg]
+        logging.info(f"Serial source departure times: {departure_times[:5]}...")
+        
+        # Performance tracking
+        total_nodes_processed = 0
+        total_phases_executed = 0
 
-        # 3. Iterate and Traverse
+        # 3. Iterate and Traverse (Algorithm 1 - Multiple BFS)
         for i, start_node in enumerate(source_nodes_in_esdg):
             logging.debug(f"Phase {i+1}: Starting traversal from {start_node}")
 
+            # Check if this source node was already visited in a previous phase
             if start_node.original_edge_id in visited_esdg_nodes:
                 logging.debug(f"Skipping {start_node} as it was already visited in a later-departure phase.")
                 continue
             
+            # Initialize frontier with current source node
             queue = collections.deque([start_node.original_edge_id])
             visited_esdg_nodes.add(start_node.original_edge_id)
+            total_phases_executed += 1
+            nodes_in_this_phase = 0
 
             while queue:
                 current_node_id = queue.popleft()
                 current_node = self.esd_graph.nodes[current_node_id]
+                nodes_in_this_phase += 1
+                total_nodes_processed += 1
 
                 # --- Core FPD Calculation ---
                 current_journey = current_node.a - start_node.t
-                destination_vertex = current_node.v
+                destination_vertex = str(current_node.v)  # Convert to string for consistent interface
                 
                 # --- Update and Path Reconstruction ---
                 if current_journey < journey_times[destination_vertex]:
@@ -98,12 +117,19 @@ class SerialESDG_FPD:
                     logging.info(f"New fastest path to '{destination_vertex}': {current_journey}s. Path via ESDG node {current_node_id}")
 
                 # --- Continue Traversal ---
+                neighbors_added = 0
                 for neighbor_id in self.esd_graph.adj.get(current_node_id, []):
                     if neighbor_id not in visited_esdg_nodes:
                         visited_esdg_nodes.add(neighbor_id)
                         queue.append(neighbor_id)
+                        neighbors_added += 1
                         # We also need to store the path taken through the ESD graph itself
                         predecessor_map[neighbor_id] = current_node_id
+                
+                if neighbors_added > 0:
+                    logging.debug(f"Added {neighbors_added} neighbors to queue from node {current_node_id}")
+            
+            logging.debug(f"Phase {i+1} completed: processed {nodes_in_this_phase} nodes")
 
 
         # 4. Reconstruct Paths from Predecessor Map
@@ -123,6 +149,9 @@ class SerialESDG_FPD:
                     continue # Handle cases where a full path isn't stored
 
         end_time = time.perf_counter()
-        logging.info(f"FPD calculation finished in {end_time - start_time:.4f} seconds.")
+        logging.info(f"Serial FPD Summary:")
+        logging.info(f"  - Phases executed: {total_phases_executed}")
+        logging.info(f"  - Total nodes processed: {total_nodes_processed}")
+        logging.info(f"  - Computation time: {end_time - start_time:.4f} seconds")
         
         return journey_times, fastest_paths

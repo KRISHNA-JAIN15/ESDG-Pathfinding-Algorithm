@@ -84,6 +84,19 @@ def visualize_top_paths(
     # edge_labels = nx.get_edge_attributes(subgraph, 'label')
     # nx.draw_networkx_edge_labels(subgraph, pos, edge_labels=edge_labels, font_size=9)
 
-    # 4. Title and show
+    # 4. Title and save/show
     plt.title(f"Top 10 Fastest Paths from Source Node '{source_vertex}'", size=20)
-    plt.show()
+    
+    # Save the plot to file instead of showing interactively to avoid the warning
+    plt.savefig(f'fastest_paths_from_{source_vertex}.png', dpi=300, bbox_inches='tight')
+    print(f"Visualization saved as 'fastest_paths_from_{source_vertex}.png'")
+    
+    # Try to show, but handle non-interactive environments gracefully
+    try:
+        import matplotlib
+        if matplotlib.get_backend() == 'Agg':
+            print("Note: Running in non-interactive mode, plot saved to file only")
+        else:
+            plt.show()
+    except:
+        print("Note: Interactive display not available in current environment")

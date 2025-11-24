@@ -24,7 +24,7 @@ def transform_temporal_to_esd(temporal_edges_data: List[Tuple[str, str, int, int
     # Step 1: Parse Input
     # Create Temporal_edge objects with unique IDs (index).
     temporal_edges = [
-        Temporal_edge(id=i, u=u, v=v, departure=t, duration=l)
+        Temporal_edge(id=i, u=int(u), v=int(v), departure=t, duration=l)
         for i, (u, v, t, l) in enumerate(temporal_edges_data)
     ]
     print(f"Parsed {len(temporal_edges)} temporal edges from G.")
