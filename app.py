@@ -11,6 +11,7 @@ from ESD_Graph.esd_transformer import transform_temporal_to_esd
 from FPD_Algorithm.serial_esdg_fpd import SerialESDG_FPD
 from FPD_Algorithm.parallel_esdg_fpd import ParallelESDG_FPD
 from FPD_Algorithm.parallel_esdg_lo import ParallelESDG_LO
+from FPD_Algorithm.parallel_esdg_lo_multi import ParallelWeightedLO
 from utils.graph_caching import save_esd_graph_to_json, load_esd_graph_from_json
 from streamlit_components.graph_visualizer import (
     create_graph_topology_view, create_temporal_heatmap, 
@@ -23,6 +24,11 @@ from streamlit_components.performance_metrics import (
     create_comparison_table, display_performance_metrics,
     create_journey_time_box_plot, create_cumulative_distribution,
     create_parallel_efficiency_chart, create_efficiency_radar
+)
+from streamlit_components.path_query import (
+    create_path_detail_visualization, create_cost_heatmap,
+    create_conflict_visualization, create_multi_path_network,
+    display_path_comparison_table, create_edge_usage_chart
 )
 
 # Configure logging
@@ -461,6 +467,21 @@ def main():
     st.markdown('<div class="sub-header">GPU-Accelerated Temporal Graph Analysis</div>', 
                 unsafe_allow_html=True)
     
+    # Analysis Mode Selection
+    st.markdown("---")
+    analysis_mode = st.radio(
+        "📊 Select Analysis Mode:",
+        ["Benchmark Analysis", "Custom Path Query"],
+        horizontal=True,
+        help="Choose between running benchmark comparisons or querying specific paths"
+    )
+    st.markdown("---")
+    
+    # Route to custom query if selected
+    if analysis_mode == "Custom Path Query":
+        run_custom_path_query()
+        return
+    
     # Sidebar
     with st.sidebar:
         st.header('⚙️ Configuration')
@@ -862,6 +883,304 @@ def main():
         
         st.image('https://via.placeholder.com/800x400/667eea/ffffff?text=Configure+Settings+and+Click+Run+Analysis', 
                 use_column_width=True)
+
+def run_custom_path_query():
+    """Custom path query interface with traffic and cost analysis"""
+    st.header("🎯 Custom Path Query")
+    st.markdown("Find specific paths with detailed traffic, cost, and conflict analysis")
+    
+    # Sidebar configuration
+    with st.sidebar:
+        st.header("⚙️ Query Configuration")
+        
+        # Dataset selection
+        st.subheader("📂 Dataset")
+        data_path = st.text_input("Data Path", "Datasets/network_temporal_day.csv")
+        
+        dataset_size = st.slider(
+            "Dataset Size",
+            min_value=0,
+            max_value=1000000,
+            value=10000,
+            step=10000,
+            help="Number of rows to load from dataset"
+        )
+        
+        # Query mode
+        st.subheader("🔍 Query Mode")
+        query_mode = st.radio(
+            "Select Query Type:",
+            ["Single Path", "Multiple Pairs"],
+            help="Query one path or multiple source-destination pairs"
+        )
+        
+        # Load data button
+        load_data_btn = st.button("📊 Load Dataset", type="primary")
+    
+    # Initialize session state
+    if 'esd_graph_custom' not in st.session_state:
+        st.session_state.esd_graph_custom = None
+        st.session_state.temporal_graph_custom = None
+        st.session_state.weighted_solver = None
+    
+    # Load data
+    if load_data_btn:
+        with st.spinner("Loading and transforming data..."):
+            try:
+                # Try loading from cache first
+                esd_graph = load_esd_graph_from_json(dataset_size)
+                
+                if esd_graph is None:
+                    # Load temporal data
+                    df = pd.read_csv(data_path, nrows=dataset_size)
+                    st.info(f"📊 Loaded {len(df)} temporal edges from CSV")
+                    
+                    # Convert DataFrame to list of tuples (u, v, departure_time, duration)
+                    temporal_edges = [
+                        (str(row['from_stop_I']), str(row['to_stop_I']),
+                         int(row['dep_time_ut']), int(row['arr_time_ut'] - row['dep_time_ut']))
+                        for _, row in df.iterrows() 
+                        if row['arr_time_ut'] - row['dep_time_ut'] > 0
+                    ]
+                    
+                    # Transform to ESD graph
+                    st.info("🔄 Transforming to ESD graph (this may take a moment)...")
+                    esd_graph = transform_temporal_to_esd(temporal_edges)
+                    
+                    # Cache for future use
+                    save_esd_graph_to_json(esd_graph, dataset_size)
+                    st.success("💾 ESD graph cached for future use")
+                else:
+                    st.success("⚡ Loaded ESD graph from cache")
+                
+                # Store in session state
+                st.session_state.esd_graph_custom = esd_graph
+                st.session_state.temporal_graph_custom = None  # We don't need the raw df
+                
+                # Initialize weighted solver with consistent weights
+                for node in esd_graph.nodes.values():
+                    node.weight = 1  # Set consistent initial weights
+                
+                st.session_state.weighted_solver = ParallelWeightedLO(esd_graph)
+                
+                num_vertices = len(esd_graph.nodes)
+                num_edges = sum(len(neighbors) for neighbors in esd_graph.adj.values())
+                st.success(f"✅ ESD Graph Ready: {num_vertices} vertices, {num_edges} edges")
+                
+            except Exception as e:
+                st.error(f"❌ Error loading data: {e}")
+                import traceback
+                st.code(traceback.format_exc())
+                return
+    
+    # Show query interface if data loaded
+    if st.session_state.esd_graph_custom is not None:
+        esd_graph = st.session_state.esd_graph_custom
+        solver = st.session_state.weighted_solver
+        
+        st.markdown("---")
+        
+        if query_mode == "Single Path":
+            # Single path query
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                source = st.number_input(
+                    "Source Vertex",
+                    min_value=0,
+                    max_value=len(esd_graph.nodes) - 1,
+                    value=0,
+                    help="Starting vertex for the path"
+                )
+            
+            with col2:
+                destination = st.number_input(
+                    "Destination Vertex",
+                    min_value=0,
+                    max_value=len(esd_graph.nodes) - 1,
+                    value=min(100, len(esd_graph.nodes) - 1),
+                    help="Target vertex for the path"
+                )
+            
+            if st.button("🚀 Find Path", type="primary"):
+                with st.spinner("Computing weighted path with conflict tracking..."):
+                    try:
+                        results, global_stats = solver.find_weighted_paths(
+                            np.array([source], dtype=np.int32),
+                            np.array([destination], dtype=np.int32)
+                        )
+                        
+                        if results:
+                            result = results[0]
+                            
+                            # Display result overview
+                            col1, col2, col3, col4 = st.columns(4)
+                            
+                            with col1:
+                                st.metric("Status", result['status'])
+                            with col2:
+                                st.metric("Total Cost", f"{result['cost']:.2f}")
+                            with col3:
+                                st.metric("Path Length", len(result['path']))
+                            with col4:
+                                st.metric("Conflicts", result['conflicts'])
+                            
+                            # Detailed path visualization
+                            st.subheader("📍 Path Details")
+                            fig_detail = create_path_detail_visualization(
+                                result['path'],
+                                esd_graph.edge_wait_times,
+                                esd_graph.out_neighbors,
+                                result['cost']
+                            )
+                            st.plotly_chart(fig_detail, use_container_width=True)
+                            
+                            # Conflict visualization
+                            st.subheader("🚦 Traffic Analysis")
+                            col1, col2 = st.columns(2)
+                            
+                            with col1:
+                                fig_conflicts = create_conflict_visualization(results, esd_graph)
+                                st.plotly_chart(fig_conflicts, use_container_width=True)
+                            
+                            with col2:
+                                st.markdown("**Global Conflict Statistics**")
+                                st.markdown(f"**Top Updated Nodes:**")
+                                if global_stats:
+                                    for i, stat in enumerate(global_stats[:5], 1):
+                                        st.markdown(f"{i}. {stat}")
+                                else:
+                                    st.info("No conflicts detected")
+                            
+                            # Path reconstruction
+                            st.subheader("🛤️ Path Sequence")
+                            path_str = " → ".join(str(v) for v in result['path'])
+                            st.code(path_str, language=None)
+                        else:
+                            st.warning("❌ No path found")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error computing path: {e}")
+        
+        else:
+            # Multiple pairs query
+            st.subheader("📋 Multiple Source-Destination Pairs")
+            
+            input_method = st.radio(
+                "Input Method:",
+                ["Manual Entry", "CSV Upload"],
+                horizontal=True
+            )
+            
+            pairs = []
+            
+            if input_method == "Manual Entry":
+                pairs_text = st.text_area(
+                    "Enter pairs (one per line: source,destination)",
+                    value="0,100\n5,150\n10,200",
+                    height=150,
+                    help="Format: source,destination (one pair per line)"
+                )
+                
+                try:
+                    for line in pairs_text.strip().split('\n'):
+                        if line.strip():
+                            src, dst = map(int, line.strip().split(','))
+                            pairs.append((src, dst))
+                except:
+                    st.error("❌ Invalid format. Use: source,destination")
+            else:
+                uploaded_file = st.file_uploader("Upload CSV (columns: source,destination)", type=['csv'])
+                if uploaded_file:
+                    pairs_df = pd.read_csv(uploaded_file)
+                    pairs = list(zip(pairs_df['source'], pairs_df['destination']))
+            
+            if pairs and st.button("🚀 Find All Paths", type="primary"):
+                with st.spinner(f"Computing {len(pairs)} weighted paths..."):
+                    try:
+                        sources = np.array([p[0] for p in pairs], dtype=np.int32)
+                        destinations = np.array([p[1] for p in pairs], dtype=np.int32)
+                        
+                        results, global_stats = solver.find_weighted_paths(sources, destinations)
+                        
+                        # Results overview
+                        successful = sum(1 for r in results if r['status'] == 'Found')
+                        
+                        col1, col2, col3, col4 = st.columns(4)
+                        with col1:
+                            st.metric("Total Queries", len(results))
+                        with col2:
+                            st.metric("Successful", successful)
+                        with col3:
+                            avg_cost = np.mean([r['cost'] for r in results if r['status'] == 'Found'])
+                            st.metric("Avg Cost", f"{avg_cost:.2f}")
+                        with col4:
+                            total_conflicts = sum(r['conflicts'] for r in results)
+                            st.metric("Total Conflicts", total_conflicts)
+                        
+                        # Visualizations
+                        st.subheader("📊 Analysis")
+                        
+                        tab1, tab2, tab3, tab4 = st.tabs([
+                            "Cost Heatmap", "Multi-Path Network", "Comparison Table", "Edge Usage"
+                        ])
+                        
+                        with tab1:
+                            fig_heatmap = create_cost_heatmap(results)
+                            st.plotly_chart(fig_heatmap, use_container_width=True)
+                        
+                        with tab2:
+                            fig_network = create_multi_path_network(results, esd_graph)
+                            st.plotly_chart(fig_network, use_container_width=True)
+                        
+                        with tab3:
+                            display_path_comparison_table(results)
+                        
+                        with tab4:
+                            fig_edges = create_edge_usage_chart(results)
+                            st.plotly_chart(fig_edges, use_container_width=True)
+                        
+                        # Global statistics
+                        st.subheader("🌐 Global Conflict Statistics")
+                        
+                        if global_stats:
+                            col1, col2 = st.columns([1, 1])
+                            
+                            with col1:
+                                st.markdown("**Top 5 Most Updated Nodes:**")
+                                for i, stat in enumerate(global_stats[:5], 1):
+                                    st.markdown(f"{i}. {stat}")
+                            
+                            with col2:
+                                st.markdown("**Conflict Details:**")
+                                st.info("These nodes experienced the most updates during pathfinding, indicating high traffic or contention.")
+                        else:
+                            st.info("No major conflicts detected - paths were optimal on first visit")
+                        
+                        # Download results
+                        st.subheader("💾 Export Results")
+                        results_df = pd.DataFrame([{
+                            'source': r['source'],
+                            'destination': r['dest'],
+                            'status': r['status'],
+                            'cost': r['cost'],
+                            'conflicts': r['conflicts'],
+                            'path_length': len(r['path']),
+                            'path': '→'.join(map(str, r['path']))
+                        } for r in results])
+                        
+                        csv = results_df.to_csv(index=False)
+                        st.download_button(
+                            "📥 Download Results CSV",
+                            csv,
+                            "path_query_results.csv",
+                            "text/csv"
+                        )
+                        
+                    except Exception as e:
+                        st.error(f"❌ Error computing paths: {e}")
+    else:
+        st.info("👆 Load a dataset from the sidebar to begin querying paths")
 
 if __name__ == "__main__":
     main()

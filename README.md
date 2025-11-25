@@ -2,6 +2,26 @@
 
 This project implements a two-step framework for efficient schedule-based pathfinding using the **Event-Station Directed Graph (ESDG)** approach. It separates the messy temporal constraints of real-world trip schedules into a clean, static graph structure that enables fast pathfinding.
 
+## 🎯 Streamlit Web Application
+
+A comprehensive web interface is available for interactive analysis and visualization:
+
+```bash
+streamlit run app.py
+```
+
+### Features:
+- **Two Analysis Modes**:
+  1. **Benchmark Analysis**: Compare Serial CPU, Parallel MBFS, and Level Order algorithms
+  2. **Custom Path Query**: Find specific paths with traffic/cost analysis
+  
+- **15+ Interactive Visualizations**: 3D graphs, heatmaps, timelines, network maps
+- **GPU Acceleration**: CUDA/CuPy for high-performance pathfinding
+- **Conflict Tracking**: Identify bottlenecks and high-traffic nodes
+- **Export Results**: Download metrics and paths as CSV
+
+See [PATH_QUERY_GUIDE.md](PATH_QUERY_GUIDE.md) for the custom query feature documentation.
+
 ---
 
 ## 📌 Part 1: Transformation — Building the Connection Map (ESDG)
