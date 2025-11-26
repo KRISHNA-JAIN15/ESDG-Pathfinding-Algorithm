@@ -642,3 +642,298 @@ def create_journey_time_comparison_chart(results, source_vertex, top_n=20):
     )
     
     return fig
+
+def create_animated_path_exploration(results, source_vertex, esd_graph, top_n=20, animation_speed=500):
+    """
+    Create an animated visualization showing step-by-step path exploration
+    from source vertex to destinations
+    """
+    if 'Serial' not in results or not results['Serial'].get('paths'):
+        return None
+    
+    paths_data = results['Serial']['paths']
+    journey_times = results['Serial']['data']
+    
+    # Get top N destinations by journey time
+    sorted_dests = sorted(
+        [(dest, time) for dest, time in journey_times.items() 
+         if time != float('inf') and dest != source_vertex],
+        key=lambda x: x[1]
+    )[:top_n]
+    
+    if not sorted_dests:
+        return None
+    
+    # Collect all nodes and edges involved in paths
+    all_nodes = set([source_vertex])
+    all_edges = []
+    node_discovery_step = {source_vertex: 0}  # Track when each node is discovered
+    
+    # Build a timeline of node discoveries
+    step_nodes = defaultdict(set)  # step -> nodes discovered at that step
+    step_edges = defaultdict(list)  # step -> edges added at that step
+    
+    step_nodes[0].add(source_vertex)
+    
+    for dest, _ in sorted_dests:
+        if dest not in paths_data:
+            continue
+        
+        path = paths_data[dest]
+        if not path:
+            continue
+        
+        current_step = 0
+        current_node = source_vertex
+        
+        for node in path:
+            next_node = str(node.v)
+            all_nodes.add(next_node)
+            
+            # Determine step based on journey time or hop count
+            current_step += 1
+            
+            if next_node not in node_discovery_step:
+                node_discovery_step[next_node] = current_step
+                step_nodes[current_step].add(next_node)
+            
+            # Add edge
+            edge = (current_node, next_node)
+            if edge not in all_edges:
+                all_edges.append(edge)
+                step_edges[current_step].append(edge)
+            
+            current_node = next_node
+    
+    # Create positions for nodes using networkx layout
+    G = nx.DiGraph()
+    G.add_nodes_from(all_nodes)
+    G.add_edges_from(all_edges)
+    pos = nx.spring_layout(G, seed=42, k=2, iterations=50)
+    
+    # Prepare animation frames
+    frames = []
+    max_step = max(step_nodes.keys())
+    
+    for frame_step in range(max_step + 1):
+        # Nodes discovered up to this step
+        discovered_nodes = set()
+        for s in range(frame_step + 1):
+            discovered_nodes.update(step_nodes[s])
+        
+        # Edges added up to this step
+        discovered_edges = []
+        for s in range(frame_step + 1):
+            discovered_edges.extend(step_edges[s])
+        
+        # Node positions and colors
+        node_x = []
+        node_y = []
+        node_colors = []
+        node_sizes = []
+        node_text = []
+        
+        for node in all_nodes:
+            x, y = pos[node]
+            node_x.append(x)
+            node_y.append(y)
+            
+            if node not in discovered_nodes:
+                # Not yet discovered - invisible or very faint
+                node_colors.append('rgba(200,200,200,0.1)')
+                node_sizes.append(5)
+                node_text.append('')
+            elif node == source_vertex:
+                # Source node - red
+                node_colors.append('rgb(255,0,0)')
+                node_sizes.append(20)
+                node_text.append(f'Source: {node}')
+            elif node_discovery_step[node] == frame_step:
+                # Newly discovered - bright highlight
+                node_colors.append('rgb(0,255,0)')
+                node_sizes.append(18)
+                node_text.append(f'{node} (NEW)')
+            else:
+                # Previously discovered - blue
+                node_colors.append('rgb(100,149,237)')
+                node_sizes.append(12)
+                node_text.append(f'{node}')
+        
+        # Edge traces
+        edge_x = []
+        edge_y = []
+        
+        for edge in discovered_edges:
+            if edge[0] in pos and edge[1] in pos:
+                x0, y0 = pos[edge[0]]
+                x1, y1 = pos[edge[1]]
+                edge_x.extend([x0, x1, None])
+                edge_y.extend([y0, y1, None])
+        
+        frame = go.Frame(
+            data=[
+                go.Scatter(
+                    x=edge_x,
+                    y=edge_y,
+                    mode='lines',
+                    line=dict(color='rgba(100,100,100,0.5)', width=1),
+                    hoverinfo='none',
+                    showlegend=False
+                ),
+                go.Scatter(
+                    x=node_x,
+                    y=node_y,
+                    mode='markers+text',
+                    marker=dict(
+                        size=node_sizes,
+                        color=node_colors,
+                        line=dict(width=1, color='white')
+                    ),
+                    text=[n if n in discovered_nodes else '' for n in all_nodes],
+                    textposition='top center',
+                    textfont=dict(size=8),
+                    hovertext=node_text,
+                    hoverinfo='text',
+                    showlegend=False
+                )
+            ],
+            name=f'Step {frame_step}',
+            layout=go.Layout(
+                title_text=f'Path Exploration - Step {frame_step}/{max_step}<br>Nodes Discovered: {len(discovered_nodes)}'
+            )
+        )
+        frames.append(frame)
+    
+    # Initial frame (step 0)
+    initial_discovered = step_nodes[0]
+    initial_node_x = []
+    initial_node_y = []
+    initial_node_colors = []
+    initial_node_sizes = []
+    initial_node_text = []
+    
+    for node in all_nodes:
+        x, y = pos[node]
+        initial_node_x.append(x)
+        initial_node_y.append(y)
+        
+        if node == source_vertex:
+            initial_node_colors.append('rgb(255,0,0)')
+            initial_node_sizes.append(20)
+            initial_node_text.append(f'Source: {node}')
+        else:
+            initial_node_colors.append('rgba(200,200,200,0.1)')
+            initial_node_sizes.append(5)
+            initial_node_text.append('')
+    
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=[],
+                y=[],
+                mode='lines',
+                line=dict(color='rgba(100,100,100,0.5)', width=1),
+                hoverinfo='none',
+                showlegend=False
+            ),
+            go.Scatter(
+                x=initial_node_x,
+                y=initial_node_y,
+                mode='markers+text',
+                marker=dict(
+                    size=initial_node_sizes,
+                    color=initial_node_colors,
+                    line=dict(width=1, color='white')
+                ),
+                text=[n if n == source_vertex else '' for n in all_nodes],
+                textposition='top center',
+                textfont=dict(size=8),
+                hovertext=initial_node_text,
+                hoverinfo='text',
+                showlegend=False
+            )
+        ],
+        frames=frames
+    )
+    
+    # Add play and pause buttons
+    fig.update_layout(
+        title=f'Animated Path Exploration from Vertex {source_vertex}',
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=''),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, title=''),
+        template='plotly_white',
+        height=700,
+        hovermode='closest',
+        updatemenus=[
+            dict(
+                type='buttons',
+                showactive=False,
+                buttons=[
+                    dict(
+                        label='Play',
+                        method='animate',
+                        args=[None, dict(
+                            frame=dict(duration=animation_speed, redraw=True),
+                            fromcurrent=True,
+                            mode='immediate',
+                            transition=dict(duration=animation_speed//2)
+                        )]
+                    ),
+                    dict(
+                        label='Pause',
+                        method='animate',
+                        args=[[None], dict(
+                            frame=dict(duration=0, redraw=False),
+                            mode='immediate',
+                            transition=dict(duration=0)
+                        )]
+                    )
+                ],
+                x=0.1,
+                y=1.15,
+                xanchor='left',
+                yanchor='top'
+            )
+        ],
+        sliders=[dict(
+            active=0,
+            steps=[
+                dict(
+                    args=[
+                        [f'Step {k}'],
+                        dict(
+                            frame=dict(duration=0, redraw=True),
+                            mode='immediate',
+                            transition=dict(duration=0)
+                        )
+                    ],
+                    label=f'Step {k}',
+                    method='animate'
+                )
+                for k in range(max_step + 1)
+            ],
+            x=0.1,
+            y=0,
+            len=0.9,
+            xanchor='left',
+            yanchor='top'
+        )],
+        annotations=[
+            dict(
+                text='<b>Legend:</b><br>🔴 Source | 🟢 New Discovery | 🔵 Visited',
+                showarrow=False,
+                x=1.0,
+                y=1.0,
+                xref='paper',
+                yref='paper',
+                xanchor='left',
+                yanchor='top',
+                font=dict(size=10),
+                bgcolor='rgba(255,255,255,0.8)',
+                bordercolor='black',
+                borderwidth=1
+            )
+        ]
+    )
+    
+    return fig
