@@ -18,7 +18,8 @@ from streamlit_components.graph_visualizer import (
     create_graph_topology_view, create_temporal_heatmap, 
     create_degree_distribution, create_path_visualization,
     create_level_distribution, create_connectivity_matrix,
-    create_path_network_map, create_journey_time_comparison_chart
+    create_path_network_map, create_journey_time_comparison_chart,
+    create_animated_path_exploration
 )
 from streamlit_components.performance_metrics import (
     create_throughput_chart, create_scalability_projection,
@@ -45,6 +46,7 @@ st.set_page_config(
 
 def load_data(dataset_path, num_rows=None):
     """Load and process temporal graph data"""
+    load_start_time = time.perf_counter()
     try:
         df = pd.read_csv(dataset_path, sep=',', nrows=num_rows)
         temporal_edges = [
@@ -53,13 +55,16 @@ def load_data(dataset_path, num_rows=None):
             for _, row in df.iterrows() 
             if row['arr_time_ut'] - row['dep_time_ut'] > 0
         ]
-        return temporal_edges, df
+        load_time = time.perf_counter() - load_start_time
+        return temporal_edges, df, load_time
     except Exception as e:
         st.error(f"Error loading data: {e}")
-        return None, None
+        return None, None, 0
 
 def build_esd_graph(temporal_edges, num_rows):
     """Build or load cached ESD graph"""
+    graph_start_time = time.perf_counter()
+    
     with st.spinner('Building ESD Graph...'):
         esd_graph = load_esd_graph_from_json(num_rows)
         if esd_graph is None:
@@ -67,21 +72,28 @@ def build_esd_graph(temporal_edges, num_rows):
             status_text = st.empty()
             
             status_text.text('Transforming temporal edges to ESD graph...')
+            transform_start = time.perf_counter()
             esd_graph = transform_temporal_to_esd(temporal_edges)
+            transform_time = time.perf_counter() - transform_start
             progress_bar.progress(50)
             
             status_text.text('Caching ESD graph...')
+            cache_start = time.perf_counter()
             save_esd_graph_to_json(esd_graph, num_rows)
+            cache_time = time.perf_counter() - cache_start
             progress_bar.progress(100)
+            
+            graph_load_time = time.perf_counter() - graph_start_time
             
             status_text.text('ESD Graph ready!')
             time.sleep(0.5)
             status_text.empty()
             progress_bar.empty()
         else:
-            st.success('Loaded cached ESD graph')
+            graph_load_time = time.perf_counter() - graph_start_time
+            st.success(f'Loaded cached ESD graph ({graph_load_time:.4f}s)')
     
-    return esd_graph
+    return esd_graph, graph_load_time
 
 def validate_source(esd_graph, source_vertex):
     """Validate and potentially fix source vertex"""
@@ -436,8 +448,8 @@ def validate_results(results):
 
 def main():
     # Header
-    st.title('ESD Graph Pathfinding Analyzer')
-    st.subheader('GPU-Accelerated Temporal Graph Analysis')
+    st.title('HPC Project')
+    st.subheader('GPU Accelerated Temporal Graph Path Finding')
     
     # Analysis Mode Selection
     st.markdown("---")
@@ -462,7 +474,6 @@ def main():
         dataset_path = st.text_input(
             'Dataset Path',
             value='Datasets/network_temporal_day.csv',
-            help='Path to the temporal graph dataset'
         )
         
         # Number of rows
@@ -477,17 +488,16 @@ def main():
         source_vertex = st.text_input(
             'Source Vertex',
             value='3391',
-            help='Starting vertex for pathfinding'
         )
         
         st.divider()
         
         # Algorithm selection
         st.subheader('Algorithms')
-        run_serial = st.checkbox('Serial CPU', value=True)
+        run_serial = st.checkbox('Serial Algorithm', value=True)
         run_mbfs = st.checkbox('Parallel MBFS (Algo 1)', value=True)
-        run_lo = st.checkbox('Parallel Level Order (Algo 3)', value=True)
         run_lw = st.checkbox('Parallel Local Worklist (Algo 2)', value=True)
+        run_lo = st.checkbox('Parallel Level Order (Algo 3)', value=True)
         
         st.divider()
         
@@ -498,16 +508,25 @@ def main():
         top_n_paths = st.slider(
             'Path Map Destinations',
             min_value=5,
-            max_value=30,
+            max_value=100,
             value=20,
             step=5,
-            help='Controls the interactive path network map - shows shortest paths to this many closest destinations with travel times and edge durations'
+            help='Number of closest destinations to show in the animated path exploration'
+        )
+        
+        animation_speed = st.slider(
+            'Animation Speed (ms per frame)',
+            min_value=100,
+            max_value=2000,
+            value=500,
+            step=100,
+            help='Duration of each animation frame in milliseconds (lower = faster)'
         )
         
         connectivity_sample = st.slider(
             'Connectivity Matrix Sample',
             min_value=50,
-            max_value=500,
+            max_value=2000,
             value=100,
             step=50,
             help='Number of nodes to sample for the connectivity matrix heatmap (higher = more detail but slower rendering)'
@@ -516,30 +535,37 @@ def main():
         max_viz_nodes = st.slider(
             'Max 3D Topology Nodes',
             min_value=100,
-            max_value=1000,
+            max_value=5000,
             value=300,
-            step=50,
+            step=100,
             help='Maximum nodes to display in the interactive 3D graph topology visualization (higher = more complete view but slower performance)'
         )
         
         with st.expander('What do these settings control?'):
             st.markdown("""
             **Path Map Destinations**  
-            The interactive network map shows shortest paths from your source vertex to the N closest destinations.
-            - Shows: Vertex labels, journey times, edge durations
-            - Features: Hover tooltips, zoom/pan, clickable legend
-            - Use case: Understanding path structure and travel patterns
+            Number of closest destinations to include in the animated path exploration.
+            - Shows step-by-step discovery of paths from source
+            - Higher values = more destinations explored (max 100)
+            - Use case: Understanding path exploration patterns
+            
+            **Animation Speed**  
+            Controls how fast the animation plays.
+            - Lower values = faster animation
+            - Higher values = slower, easier to follow
+            - Use case: Adjust based on graph complexity and personal preference
             
             **Connectivity Matrix Sample**  
             A heatmap showing which nodes connect to which other nodes.
             - Samples a subset of nodes for visualization
-            - Higher values = more detailed but slower
+            - Higher values = more detailed but slower (max 2000)
             - Use case: Analyzing graph connectivity patterns
             
             **Max 3D Topology Nodes**  
             An interactive 3D scatter plot of the graph structure.
             - Node size indicates importance (degree/connectivity)
             - Colors show clustering or properties
+            - Higher values = more complete view (max 5000)
             - Use case: Understanding overall graph structure
             
             **Tip:** Start with default values, then adjust based on your graph size and performance needs.
@@ -609,21 +635,14 @@ def main():
             st.warning('Please select at least one algorithm to run')
             return
         
-        # Configuration summary
-        st.info(f"""
-        **Analysis Configuration:** Dataset size: {num_rows if num_rows else 'Full'} rows | 
-        Source: {source_vertex} | Path destinations: {top_n_paths} | 
-        3D viz nodes: {max_viz_nodes} | Matrix sample: {connectivity_sample}
-        """)
-        
         # Step 1: Load Data
         st.header('Data Loading')
-        temporal_edges, df = load_data(dataset_path, num_rows)
+        temporal_edges, df, data_load_time = load_data(dataset_path, num_rows)
         
         if temporal_edges is None:
             return
         
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
             st.metric('Temporal Edges', f'{len(temporal_edges):,}')
         with col2:
@@ -631,23 +650,28 @@ def main():
         with col3:
             unique_vertices = len(set([e[0] for e in temporal_edges] + [e[1] for e in temporal_edges]))
             st.metric('Unique Vertices', f'{unique_vertices:,}')
+        with col4:
+            st.metric('Load Time', f'{data_load_time:.4f}s', help='Time to load and parse CSV data')
         
         # Step 2: Build ESD Graph
         st.header('ESD Graph Construction')
-        esd_graph = build_esd_graph(temporal_edges, num_rows)
+        esd_graph, graph_build_time = build_esd_graph(temporal_edges, num_rows)
         
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         with col1:
             st.metric('ESD Nodes', f'{len(esd_graph.nodes):,}')
         with col2:
             total_edges = sum(len(neighbors) for neighbors in esd_graph.adj.values())
             st.metric('ESD Edges', f'{total_edges:,}')
+        with col3:
+            st.metric('Build/Load Time', f'{graph_build_time:.4f}s', help='Time to construct or load cached ESD graph')
         
         # Validate source
         source_vertex = validate_source(esd_graph, source_vertex)
         
         # Step 3: Run Algorithms
         st.header('Algorithm Execution')
+
         results = run_algorithms(esd_graph, source_vertex, run_serial, run_mbfs, run_lo, run_lw)
         
         if not results:
@@ -740,64 +764,29 @@ def main():
             st.plotly_chart(fig_levels, width='stretch')
             st.info('Level distribution shows the graph structure used by the Level Order algorithm for parallel processing')
         
-        # Step 6: Interactive Path Network Visualization
-        st.header('Interactive Path Network Map')
-        
-        st.markdown(f"""
-        This interactive map shows the shortest paths from the source vertex to the top **{top_n_paths}** closest destinations.
-        Explore the network structure, travel times, and edge durations.
-        
-        *Adjust the number of destinations in the sidebar before running analysis.*
-        """)
+        # Step 6: Animated Path Exploration
+        st.header('Animated Path Exploration')
         
         if 'Serial' in results and results['Serial'].get('paths'):
-            col_legend, col_map = st.columns([1, 4])
             
-            with col_legend:
-                st.markdown("""
-                **Map Legend:**
-                
-                **Red Star**  
-                Source vertex
-                
-                **Teal Diamonds**  
-                Top destinations
-                
-                **Green Circles**  
-                Intermediate nodes
-                
-                **Gray Lines**  
-                Travel edges
-                
-                ---
-                
-                **Interactions:**
-                - Hover for details
-                - Zoom with scroll
-                - Pan by dragging
-                - Click legend to toggle
-                """)
-            
-            with col_map:
-                # Use a container to avoid full reload
-                fig_path_map = create_path_network_map(results, source_vertex, esd_graph, top_n=top_n_paths)
-                if fig_path_map:
-                    st.plotly_chart(fig_path_map, width='stretch', key=f'path_map_{top_n_paths}')
-                else:
-                    st.warning('Unable to generate path map. Ensure paths are available.')
+            fig_animated = create_animated_path_exploration(
+                results, source_vertex, esd_graph, 
+                top_n=top_n_paths, 
+                animation_speed=animation_speed
+            )
+            if fig_animated:
+                st.plotly_chart(fig_animated, width='stretch', key=f'animated_paths_{top_n_paths}')
+            else:
+                st.warning('Unable to generate animated visualization')
             
             # Journey time comparison chart
+            st.divider()
             st.subheader('Journey Time Rankings')
             fig_journey_comp = create_journey_time_comparison_chart(results, source_vertex, top_n=top_n_paths)
             if fig_journey_comp:
                 st.plotly_chart(fig_journey_comp, width='stretch', key=f'journey_chart_{top_n_paths}')
-                
-            st.info("""
-            **Tip:** Adjust the slider above to dynamically change the number of destinations displayed. 
-            The visualization updates instantly without rerunning the entire analysis.
-            """)
         else:
-            st.info('Enable Serial algorithm and run analysis to see path network visualization')
+            st.info('Enable Serial algorithm and run analysis to see path exploration visualization')
         
         st.divider()
         
