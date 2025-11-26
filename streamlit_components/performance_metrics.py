@@ -5,6 +5,38 @@ import pandas as pd
 import numpy as np
 from collections import defaultdict
 
+def display_multi_query_metrics(results, num_queries):
+    """
+    Display performance metrics specifically for multi-query benchmark mode
+    """
+    st.subheader('Multi-Query Performance Dashboard')
+    
+    # Create metrics grid
+    num_algorithms = len(results)
+    cols = st.columns(num_algorithms)
+    
+    for col, (alg, data) in zip(cols, results.items()):
+        with col:
+            st.markdown(f"### {alg}")
+            
+            # Total compute time
+            st.metric('Total Time', f"{data['time']:.4f}s")
+            
+            # Average time per query
+            avg_per_query = data['avg_time_per_query'] * 1000  # Convert to ms
+            st.metric('Avg per Query', f"{avg_per_query:.2f}ms")
+            
+            # Throughput (queries per second)
+            throughput = num_queries / data['time']
+            st.metric('Throughput', f"{throughput:.1f} q/s")
+            
+            # Speedup (if applicable)
+            if 'Serial' in results and alg != 'Serial':
+                speedup = results['Serial']['time'] / data['time']
+                st.metric('Speedup', f"{speedup:.2f}x", 
+                         delta=f"{(speedup-1)*100:.1f}%",
+                         delta_color="normal")
+
 def create_algorithm_timeline(execution_log):
     """
     Create a Gantt-chart style timeline of algorithm execution phases
@@ -70,55 +102,10 @@ def create_memory_usage_chart(memory_stats):
     
     return fig
 
-def create_efficiency_radar(results):
-    """
-    Create a radar chart comparing algorithm efficiency metrics
-    """
-    if len(results) < 2:
-        return None
-    
-    # Define metrics (normalized 0-1)
-    metrics = ['Speed', 'Scalability', 'Memory Efficiency', 'Accuracy', 'Parallelism']
-    
-    fig = go.Figure()
-    
-    # Add traces for each algorithm
-    for alg, data in results.items():
-        # Calculate normalized scores (higher is better)
-        speed_score = 1.0 / (data['time'] + 0.001)  # Inverse of time
-        speed_score = min(speed_score, 1.0)
-        
-        # Placeholder scores (would be calculated from actual metrics)
-        scores = [
-            speed_score,
-            0.8 if 'MBFS' in alg or 'LO' in alg else 0.4,  # Scalability
-            0.7 if 'LO' in alg else 0.5,  # Memory efficiency
-            1.0,  # Accuracy (all should be equal)
-            0.9 if 'MBFS' in alg or 'LO' in alg else 0.1  # Parallelism
-        ]
-        
-        fig.add_trace(go.Scatterpolar(
-            r=scores,
-            theta=metrics,
-            fill='toself',
-            name=alg,
-            line=dict(color=data['color'])
-        ))
-    
-    fig.update_layout(
-        polar=dict(
-            radialaxis=dict(visible=True, range=[0, 1])
-        ),
-        showlegend=True,
-        title='Algorithm Efficiency Comparison',
-        height=500
-    )
-    
-    return fig
 
-def create_throughput_chart(results, num_nodes):
+def create_throughput_chart(results, num_nodes=None, is_multi_query=False):
     """
-    Calculate and visualize throughput (nodes processed per second)
+    Calculate and visualize throughput (nodes/queries processed per second)
     """
     algorithms = []
     throughputs = []
@@ -126,25 +113,42 @@ def create_throughput_chart(results, num_nodes):
     
     for alg, data in results.items():
         algorithms.append(alg)
-        throughput = num_nodes / data['time']
+        
+        if is_multi_query and 'queries' in data:
+            # Throughput in queries per second
+            throughput = data['queries'] / data['time']
+        elif num_nodes:
+            # Throughput in nodes processed per second
+            throughput = num_nodes / data['time']
+        else:
+            # Fallback: use inverse time
+            throughput = 1.0 / data['time']
+        
         throughputs.append(throughput)
         colors.append(data['color'])
     
     fig = go.Figure()
     
+    if is_multi_query:
+        ylabel = 'Queries per Second'
+        hover_label = 'queries/s'
+    else:
+        ylabel = 'Nodes Processed per Second'
+        hover_label = 'nodes/s'
+    
     fig.add_trace(go.Bar(
         x=algorithms,
         y=throughputs,
         marker_color=colors,
-        text=[f'{t:,.0f}' for t in throughputs],
+        text=[f'{t:,.0f}' if t >= 1 else f'{t:.2f}' for t in throughputs],
         textposition='auto',
-        hovertemplate='<b>%{x}</b><br>Throughput: %{y:,.0f} nodes/s<extra></extra>'
+        hovertemplate=f'<b>%{{x}}</b><br>Throughput: %{{y:,.2f}} {hover_label}<extra></extra>'
     ))
     
     fig.update_layout(
         title='Processing Throughput',
         xaxis_title='Algorithm',
-        yaxis_title='Nodes Processed per Second',
+        yaxis_title=ylabel,
         template='plotly_white',
         height=400
     )
@@ -198,25 +202,44 @@ def create_scalability_projection(results, current_size):
     
     return fig
 
-def create_comparison_table(results):
+def create_comparison_table(results, is_multi_query=False):
     """
     Create a detailed comparison table
     """
     data = []
     
     for alg, res in results.items():
-        clean_data = {k: v for k, v in res['data'].items() if v != float('inf')}
-        times = list(clean_data.values()) if clean_data else []
-        
         row = {
             'Algorithm': alg,
             'Compute Time': f"{res['time']:.6f}s",
-            'Reachable Nodes': len(clean_data),
-            'Min Journey': f"{min(times):.2f}s" if times else 'N/A',
-            'Max Journey': f"{max(times):.2f}s" if times else 'N/A',
-            'Median Journey': f"{np.median(times):.2f}s" if times else 'N/A',
-            'Std Dev': f"{np.std(times):.2f}s" if times else 'N/A'
         }
+        
+        if is_multi_query:
+            # Multi-query mode: show query-specific metrics
+            row['Queries'] = res.get('queries', 'N/A')
+            row['Avg per Query'] = f"{res.get('avg_time_per_query', 0) * 1000:.2f}ms" if 'avg_time_per_query' in res else 'N/A'
+            row['Throughput'] = f"{res.get('queries', 0) / res['time']:.1f} q/s" if res['time'] > 0 else 'N/A'
+            
+            # Get query result times
+            times = [t for t in res['data'].values() if t != float('inf')]
+            if times:
+                row['Min Result'] = f"{min(times):.2f}s"
+                row['Max Result'] = f"{max(times):.2f}s"
+                row['Median Result'] = f"{np.median(times):.2f}s"
+            else:
+                row['Min Result'] = 'N/A'
+                row['Max Result'] = 'N/A'
+                row['Median Result'] = 'N/A'
+        else:
+            # Single-source mode: show reachability metrics
+            clean_data = {k: v for k, v in res['data'].items() if v != float('inf')}
+            times = list(clean_data.values()) if clean_data else []
+            
+            row['Reachable Nodes'] = len(clean_data)
+            row['Min Journey'] = f"{min(times):.2f}s" if times else 'N/A'
+            row['Max Journey'] = f"{max(times):.2f}s" if times else 'N/A'
+            row['Median Journey'] = f"{np.median(times):.2f}s" if times else 'N/A'
+            row['Std Dev'] = f"{np.std(times):.2f}s" if times else 'N/A'
         
         if 'init_time' in res:
             row['Init Time'] = f"{res['init_time']:.6f}s"
@@ -234,7 +257,6 @@ def display_performance_metrics(results, num_nodes):
     Display comprehensive performance metrics in a grid layout
     """
     st.subheader('Performance Metrics Dashboard')
-    st.caption('Times shown are for computing paths from ONE source to ALL reachable destinations')
     
     # Create metrics grid
     num_algorithms = len(results)
@@ -245,7 +267,7 @@ def display_performance_metrics(results, num_nodes):
             st.markdown(f"### {alg}")
             
             # Compute time
-            st.metric('Compute Time', f"{data['time']:.4f}s", help='Time to find paths from source to all reachable vertices')
+            st.metric('Compute Time', f"{data['time']:.4f}s")
             
             # Throughput
             throughput = num_nodes / data['time']

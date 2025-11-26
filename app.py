@@ -25,7 +25,8 @@ from streamlit_components.performance_metrics import (
     create_throughput_chart, create_scalability_projection,
     create_comparison_table, display_performance_metrics,
     create_journey_time_box_plot, create_cumulative_distribution,
-    create_parallel_efficiency_chart, create_efficiency_radar
+    create_parallel_efficiency_chart,
+    display_multi_query_metrics
 )
 from streamlit_components.path_query import (
     create_path_detail_visualization, create_cost_heatmap,
@@ -634,8 +635,8 @@ def main():
         if benchmark_mode == 'Multiple Sources -> Multiple Destinations':
             num_queries = st.slider(
                 'Number of Query Pairs',
-                min_value=10,
-                max_value=1000,
+                min_value=100,
+                max_value=500,
                 value=100,
                 step=10,
                 help='Number of random source-destination pairs to query'
@@ -645,13 +646,12 @@ def main():
         
         st.divider()
         
-        # Visualization parameters (set before analysis)
+        # Visualization parameters
         st.subheader('Visualization Settings')
-        st.caption('Configure these before running analysis to avoid reloads')
         
         top_n_paths = st.slider(
             'Path Map Destinations',
-            min_value=5,
+            min_value=10,
             max_value=100,
             value=20,
             step=5,
@@ -661,10 +661,10 @@ def main():
         animation_speed = st.slider(
             'Animation Speed (ms per frame)',
             min_value=100,
-            max_value=2000,
+            max_value=1000,
             value=500,
             step=100,
-            help='Duration of each animation frame in milliseconds (lower = faster)'
+            help='Duration of each animation frame in milliseconds'
         )
         
         connectivity_sample = st.slider(
@@ -678,42 +678,41 @@ def main():
         
         max_viz_nodes = st.slider(
             'Max 3D Topology Nodes',
-            min_value=100,
-            max_value=5000,
-            value=300,
+            min_value=500,
+            max_value=2000,
+            value=500,
             step=100,
             help='Maximum nodes to display in the interactive 3D graph topology visualization (higher = more complete view but slower performance)'
         )
         
-        with st.expander('What do these settings control?'):
-            st.markdown("""
-            **Path Map Destinations**  
-            Number of closest destinations to include in the animated path exploration.
-            - Shows step-by-step discovery of paths from source
-            - Higher values = more destinations explored (max 100)
-            - Use case: Understanding path exploration patterns
+        # with st.expander('What do these settings control?'):
+        #     st.markdown("""
+        #     **Path Map Destinations**  
+        #     Number of closest destinations to include in the animated path exploration.
+        #     - Shows step-by-step discovery of paths from source
+        #     - Higher values = more destinations explored (max 100)
+        #     - Use case: Understanding path exploration patterns
             
-            **Animation Speed**  
-            Controls how fast the animation plays.
-            - Lower values = faster animation
-            - Higher values = slower, easier to follow
-            - Use case: Adjust based on graph complexity and personal preference
+        #     **Animation Speed**  
+        #     Controls how fast the animation plays.
+        #     - Lower values = faster animation
+        #     - Higher values = slower, easier to follow
+        #     - Use case: Adjust based on graph complexity and personal preference
             
-            **Connectivity Matrix Sample**  
-            A heatmap showing which nodes connect to which other nodes.
-            - Samples a subset of nodes for visualization
-            - Higher values = more detailed but slower (max 2000)
-            - Use case: Analyzing graph connectivity patterns
+        #     **Connectivity Matrix Sample**  
+        #     A heatmap showing which nodes connect to which other nodes.
+        #     - Samples a subset of nodes for visualization
+        #     - Higher values = more detailed but slower (max 2000)
+        #     - Use case: Analyzing graph connectivity patterns
             
-            **Max 3D Topology Nodes**  
-            An interactive 3D scatter plot of the graph structure.
-            - Node size indicates importance (degree/connectivity)
-            - Colors show clustering or properties
-            - Higher values = more complete view (max 5000)
-            - Use case: Understanding overall graph structure
+        #     **Max 3D Topology Nodes**  
+        #     An interactive 3D scatter plot of the graph structure.
+        #     - Node size indicates importance (degree/connectivity)
+        #     - Colors show clustering or properties
+        #     - Higher values = more complete view (max 5000)
+        #     - Use case: Understanding overall graph structure
             
-            **Tip:** Start with default values, then adjust based on your graph size and performance needs.
-            """)
+        #     """)
         
         st.divider()
         
@@ -819,9 +818,11 @@ def main():
         if benchmark_mode == 'Single Source -> All Destinations':
             st.info(f"**Computing fastest paths from source vertex {source_vertex} to ALL reachable destinations**")
             results = run_algorithms(esd_graph, source_vertex, run_serial, run_mbfs, run_lo, run_lw)
+            is_multi_query_mode = False
         else:
             st.info(f"**Computing {num_queries} random source-destination path queries**")
             results = run_multi_query_benchmark(esd_graph, num_queries, run_serial, run_mbfs, run_lo, run_lw)
+            is_multi_query_mode = True
         
         if not results:
             st.error('No results to display')
@@ -831,12 +832,20 @@ def main():
         st.header('Performance Analysis')
         
         # Performance metrics dashboard
-        display_performance_metrics(results, len(esd_graph.nodes))
+        if is_multi_query_mode:
+            # Show query-specific metrics
+            display_multi_query_metrics(results, num_queries)
+        else:
+            # Show standard performance metrics
+            display_performance_metrics(results, len(esd_graph.nodes))
         
         st.divider()
         
-        # Charts in tabs
-        tab1, tab2, tab3, tab4 = st.tabs(['Time Comparison', 'Speedup', 'Distribution', 'Efficiency'])
+        # Charts in tabs - adjust based on mode
+        if is_multi_query_mode:
+            tab1, tab2, tab3 = st.tabs(['Time Comparison', 'Speedup', 'Efficiency'])
+        else:
+            tab1, tab2, tab3, tab4 = st.tabs(['Time Comparison', 'Speedup', 'Distribution', 'Efficiency'])
         
         with tab1:
             col1, col2 = st.columns(2)
@@ -844,7 +853,7 @@ def main():
                 fig_perf = create_performance_chart(results)
                 st.plotly_chart(fig_perf, width='stretch')
             with col2:
-                fig_throughput = create_throughput_chart(results, len(esd_graph.nodes))
+                fig_throughput = create_throughput_chart(results, len(esd_graph.nodes), is_multi_query=is_multi_query_mode)
                 st.plotly_chart(fig_throughput, width='stretch')
         
         with tab2:
@@ -862,82 +871,83 @@ def main():
                 else:
                     st.info('Parallel efficiency requires Serial baseline')
         
-        with tab3:
-            col1, col2 = st.columns(2)
-            with col1:
-                fig_dist = create_journey_distribution(results)
-                st.plotly_chart(fig_dist, width='stretch')
-            with col2:
-                fig_box = create_journey_time_box_plot(results)
-                st.plotly_chart(fig_box, width='stretch')
-            
-            st.plotly_chart(create_cumulative_distribution(results), width='stretch')
+        if not is_multi_query_mode:
+            with tab3:
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig_dist = create_journey_distribution(results)
+                    st.plotly_chart(fig_dist, width='stretch')
+                with col2:
+                    fig_box = create_journey_time_box_plot(results)
+                    st.plotly_chart(fig_box, width='stretch')
+                
+                st.plotly_chart(create_cumulative_distribution(results), width='stretch')
         
-        with tab4:
-            col1, col2 = st.columns(2)
-            with col1:
+        # Efficiency tab (different index based on mode)
+        with (tab3 if is_multi_query_mode else tab4):
+            if is_multi_query_mode:
+                # Show efficiency metrics for multi-query
+                st.info('Multi-query efficiency metrics displayed in the dashboard above')
+            else:
+                # Show reachability for single-source
                 fig_reach = create_reachability_comparison(results)
                 st.plotly_chart(fig_reach, width='stretch')
-            with col2:
-                fig_radar = create_efficiency_radar(results)
-                if fig_radar:
-                    st.plotly_chart(fig_radar, width='stretch')
+        
+        # Step 5: Graph Analysis (only for single-source mode)
+        if not is_multi_query_mode:
+            st.header('Graph Structure Analysis')
+            
+            graph_tab1, graph_tab2, graph_tab3, graph_tab4 = st.tabs(['Topology', 'Temporal', 'Degree', 'Levels'])
+            
+            with graph_tab1:
+                with st.spinner('Generating topology visualization...'):
+                    fig_topology = create_graph_topology_view(esd_graph, max_nodes=max_viz_nodes)
+                    st.plotly_chart(fig_topology, width='stretch')
+                
+                st.subheader('Connectivity Matrix')
+                fig_matrix = create_connectivity_matrix(esd_graph, sample_size=connectivity_sample)
+                st.plotly_chart(fig_matrix, width='stretch')
+                st.caption(f'Showing connectivity matrix for {connectivity_sample} sampled nodes (configured in sidebar)')
+            
+            with graph_tab2:
+                fig_temporal = create_temporal_heatmap(esd_graph)
+                st.plotly_chart(fig_temporal, width='stretch')
+            
+            with graph_tab3:
+                fig_degree = create_degree_distribution(esd_graph)
+                st.plotly_chart(fig_degree, width='stretch')
+            
+            with graph_tab4:
+                fig_levels = create_level_distribution(esd_graph)
+                st.plotly_chart(fig_levels, width='stretch')
+                st.info('Level distribution shows the graph structure used by the Level Order algorithm for parallel processing')
+        
+        # Step 6: Animated Path Exploration (only for single-source mode)
+        if not is_multi_query_mode:
+            st.header('Animated Path Exploration')
+            
+            if 'Serial' in results and results['Serial'].get('paths'):
+                
+                fig_animated = create_animated_path_exploration(
+                    results, source_vertex, esd_graph, 
+                    top_n=top_n_paths, 
+                    animation_speed=animation_speed
+                )
+                if fig_animated:
+                    st.plotly_chart(fig_animated, width='stretch', key=f'animated_paths_{top_n_paths}')
                 else:
-                    st.info('Need multiple algorithms for comparison')
-        
-        # Step 5: Graph Analysis
-        st.header('Graph Structure Analysis')
-        
-        graph_tab1, graph_tab2, graph_tab3, graph_tab4 = st.tabs(['Topology', 'Temporal', 'Degree', 'Levels'])
-        
-        with graph_tab1:
-            with st.spinner('Generating topology visualization...'):
-                fig_topology = create_graph_topology_view(esd_graph, max_nodes=max_viz_nodes)
-                st.plotly_chart(fig_topology, width='stretch')
-            
-            st.subheader('Connectivity Matrix')
-            fig_matrix = create_connectivity_matrix(esd_graph, sample_size=connectivity_sample)
-            st.plotly_chart(fig_matrix, width='stretch')
-            st.caption(f'Showing connectivity matrix for {connectivity_sample} sampled nodes (configured in sidebar)')
-        
-        with graph_tab2:
-            fig_temporal = create_temporal_heatmap(esd_graph)
-            st.plotly_chart(fig_temporal, width='stretch')
-        
-        with graph_tab3:
-            fig_degree = create_degree_distribution(esd_graph)
-            st.plotly_chart(fig_degree, width='stretch')
-        
-        with graph_tab4:
-            fig_levels = create_level_distribution(esd_graph)
-            st.plotly_chart(fig_levels, width='stretch')
-            st.info('Level distribution shows the graph structure used by the Level Order algorithm for parallel processing')
-        
-        # Step 6: Animated Path Exploration
-        st.header('Animated Path Exploration')
-        
-        if 'Serial' in results and results['Serial'].get('paths'):
-            
-            fig_animated = create_animated_path_exploration(
-                results, source_vertex, esd_graph, 
-                top_n=top_n_paths, 
-                animation_speed=animation_speed
-            )
-            if fig_animated:
-                st.plotly_chart(fig_animated, width='stretch', key=f'animated_paths_{top_n_paths}')
+                    st.warning('Unable to generate animated visualization')
+                
+                # Journey time comparison chart
+                st.divider()
+                st.subheader('Journey Time Rankings')
+                fig_journey_comp = create_journey_time_comparison_chart(results, source_vertex, top_n=top_n_paths)
+                if fig_journey_comp:
+                    st.plotly_chart(fig_journey_comp, width='stretch', key=f'journey_chart_{top_n_paths}')
             else:
-                st.warning('Unable to generate animated visualization')
+                st.info('Enable Serial algorithm and run analysis to see path exploration visualization')
             
-            # Journey time comparison chart
             st.divider()
-            st.subheader('Journey Time Rankings')
-            fig_journey_comp = create_journey_time_comparison_chart(results, source_vertex, top_n=top_n_paths)
-            if fig_journey_comp:
-                st.plotly_chart(fig_journey_comp, width='stretch', key=f'journey_chart_{top_n_paths}')
-        else:
-            st.info('Enable Serial algorithm and run analysis to see path exploration visualization')
-        
-        st.divider()
         
         # Step 7: Scalability Analysis
         st.header('Scalability Projection')
@@ -945,16 +955,18 @@ def main():
         st.plotly_chart(fig_scalability, width='stretch')
         st.info('This projection estimates algorithm performance on different dataset sizes based on complexity analysis')
         
-        # Step 8: Validation
-        validate_results(results)
+        # Step 8: Validation (only for single-source mode)
+        if not is_multi_query_mode:
+            validate_results(results)
         
-        # Step 9: Detailed Path Information
-        display_sample_paths(results, source_vertex, num_samples=top_n_paths)
+        # Step 9: Detailed Path Information (only for single-source mode)
+        if not is_multi_query_mode:
+            display_sample_paths(results, source_vertex, num_samples=top_n_paths)
         
         # Step 10: Detailed Metrics Table
         st.header('Detailed Metrics')
         
-        df_comparison = create_comparison_table(results)
+        df_comparison = create_comparison_table(results, is_multi_query=is_multi_query_mode)
         st.dataframe(df_comparison, width='stretch', hide_index=True)
         
         # Download option
@@ -979,20 +991,9 @@ def main():
         3. **Set visualization parameters** - Path destinations, matrix samples, 3D nodes
         4. **Click "Run Analysis"** - All visualizations will use your configured settings
         
-        **Pro Tip:** Set all visualization parameters in the sidebar BEFORE running analysis. 
-        This prevents page reloads and provides a smooth experience exploring your results.
-        
-        The app will guide you through:
-        - Data loading and preprocessing
-        - ESD graph construction
-        - Algorithm execution and comparison
-        - Interactive path network maps
-        - Performance visualization and metrics
-        - Result validation
         """)
         
-        st.image('https://via.placeholder.com/800x400/667eea/ffffff?text=Configure+Settings+and+Click+Run+Analysis', 
-                width='stretch')
+        
 
 def run_custom_path_query():
     """Custom path query interface with traffic and cost analysis"""

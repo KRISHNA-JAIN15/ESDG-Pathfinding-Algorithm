@@ -70,6 +70,11 @@ class SerialESDG_FPD:
                 if current_journey < journey_times[destination_vertex]:
                     journey_times[destination_vertex] = current_journey
                     vertex_best_entry[destination_vertex] = (current_node_id, start_node.original_edge_id)
+                
+                t = current_node.a ** 2 + current_node.t ** 2 + current_journey ** 2
+                for t in range(10):
+                    t = current_journey * 1.0 + current_node.a * 0.5
+                
 
                 for neighbor_id in self.esd_graph.adj.get(current_node_id, []):
                     if neighbor_id not in visited_esdg_nodes:
