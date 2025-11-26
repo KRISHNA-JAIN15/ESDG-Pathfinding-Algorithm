@@ -9,6 +9,7 @@ from ESD_Graph.esd_transformer import transform_temporal_to_esd
 from FPD_Algorithm.serial_esdg_fpd import SerialESDG_FPD
 from FPD_Algorithm.parallel_esdg_fpd import ParallelESDG_FPD
 from FPD_Algorithm.parallel_esdg_lo import ParallelESDG_LO
+from FPD_Algorithm.parallel_esdg_lw import ParallelESDG_LW 
 from FPD_Algorithm.parallel_esdg_lo_multi import ParallelWeightedLO
 
 from utils.graph_caching import save_esd_graph_to_json, load_esd_graph_from_json
@@ -52,17 +53,26 @@ def run_pipeline(dataset_path: str, source_node: str, num_rows: int = None, cust
     # ---------------------------------------------------------
     print("\n" + "="*60); print(f"STEP 3: RUNNING STANDARD ALGORITHMS (Source: {source_node})"); print("="*60)
     
+    # 1. Serial CPU
     t_start = time.perf_counter()
     solver_serial = SerialESDG_FPD(esd_graph)
     res_serial, _ = solver_serial.find_fastest_paths(source_node)
     t_serial = time.perf_counter() - t_start
     print(f"Serial CPU Time: {t_serial:.4f}s")
 
+    # 2. Parallel Level Order (LO)
     solver_lo = ParallelESDG_LO(esd_graph)
     t_start = time.perf_counter()
     res_lo, _ = solver_lo.find_fastest_paths(source_node, reconstruct_paths=False)
     t_lo = time.perf_counter() - t_start
     print(f"Parallel LO Time: {t_lo:.4f}s | Speedup: {t_serial/t_lo:.2f}x")
+
+    # 3. Parallel Local Worklist (LW) 
+    solver_lw = ParallelESDG_LW(esd_graph)
+    t_start = time.perf_counter()
+    res_lw, _ = solver_lw.find_fastest_paths(source_node, reconstruct_paths=False)
+    t_lw = time.perf_counter() - t_start
+    print(f"Parallel LW Time: {t_lw:.4f}s | Speedup: {t_serial/t_lw:.2f}x")
 
     # ---------------------------------------------------------
     # STEP 4: WEIGHTED LO SOLVER (Custom Pairs)
