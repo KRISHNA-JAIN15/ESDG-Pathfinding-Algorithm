@@ -362,14 +362,14 @@ def display_sample_paths(results, source_vertex, num_samples=10):
                 # Build vertex path
                 vertices = [str(path_nodes[0].u)] if path_nodes else []
                 vertices.extend([str(n.v) for n in path_nodes])
-                vertices_str = " → ".join(vertices)
+                vertices_str = " -> ".join(vertices)
                 
                 # Build edge path
-                edge_str = " → ".join([f"e{n.original_edge_id}" for n in path_nodes])
+                edge_str = " -> ".join([f"e{n.original_edge_id}" for n in path_nodes])
                 
                 # Calculate edge durations
                 edge_durations = [f"{n.a - n.t}s" for n in path_nodes]
-                durations_str = " → ".join(edge_durations)
+                durations_str = " -> ".join(edge_durations)
                 
                 path_data.append({
                     'Rank': len(path_data) + 1,
@@ -446,6 +446,128 @@ def validate_results(results):
     df = pd.DataFrame(validation_results)
     st.dataframe(df, width='stretch', hide_index=True)
 
+def run_multi_query_benchmark(esd_graph, num_queries, run_serial, run_mbfs, run_lo, run_lw):
+    """Execute algorithms on multiple random source-destination pairs"""
+    import random
+    
+    # Get all vertices
+    all_vertices = set()
+    for node in esd_graph.nodes.values():
+        all_vertices.add(int(node.u))
+        all_vertices.add(int(node.v))
+    all_vertices = list(all_vertices)
+    
+    # Generate random source-destination pairs
+    query_pairs = []
+    for _ in range(num_queries):
+        src = str(random.choice(all_vertices))
+        dst = str(random.choice(all_vertices))
+        if src != dst:
+            query_pairs.append((src, dst))
+    
+    st.info(f'Generated {len(query_pairs)} query pairs')
+    
+    results = {}
+    
+    # Serial Algorithm
+    if run_serial:
+        with st.spinner('Running Serial CPU Algorithm...'):
+            t_start = time.perf_counter()
+            solver_serial = SerialESDG_FPD(esd_graph)
+            
+            query_results = []
+            for src, dst in query_pairs:
+                res, _ = solver_serial.find_fastest_paths(src)
+                query_results.append(res.get(dst, float('inf')))
+            
+            t_serial = time.perf_counter() - t_start
+            results['Serial'] = {
+                'time': t_serial,
+                'data': dict(zip(range(len(query_results)), query_results)),
+                'paths': None,
+                'color': '#FF6B6B',
+                'queries': len(query_pairs),
+                'avg_time_per_query': t_serial / len(query_pairs)
+            }
+            st.success(f'Serial: {t_serial:.4f}s ({t_serial/len(query_pairs)*1000:.2f}ms per query)')
+    
+    # Parallel MBFS
+    if run_mbfs:
+        with st.spinner('Running Parallel GPU (MBFS)...'):
+            t_init_start = time.perf_counter()
+            solver_mbfs = ParallelESDG_FPD(esd_graph)
+            t_init = time.perf_counter() - t_init_start
+            
+            t_compute_start = time.perf_counter()
+            query_results = []
+            for src, dst in query_pairs:
+                res, _ = solver_mbfs.find_fastest_paths(src, reconstruct_paths=False)
+                query_results.append(res.get(dst, float('inf')))
+            t_compute = time.perf_counter() - t_compute_start
+            
+            results['MBFS'] = {
+                'time': t_compute,
+                'init_time': t_init,
+                'total_time': t_init + t_compute,
+                'data': dict(zip(range(len(query_results)), query_results)),
+                'color': '#4ECDC4',
+                'queries': len(query_pairs),
+                'avg_time_per_query': t_compute / len(query_pairs)
+            }
+            st.success(f'MBFS: {t_compute:.4f}s ({t_compute/len(query_pairs)*1000:.2f}ms per query, Init: {t_init:.4f}s)')
+    
+    # Parallel Level Order
+    if run_lo:
+        with st.spinner('Running Parallel GPU (Level Order)...'):
+            t_init_start = time.perf_counter()
+            solver_lo = ParallelESDG_LO(esd_graph)
+            t_init = time.perf_counter() - t_init_start
+            
+            t_compute_start = time.perf_counter()
+            query_results = []
+            for src, dst in query_pairs:
+                res, _ = solver_lo.find_fastest_paths(src, reconstruct_paths=False)
+                query_results.append(res.get(dst, float('inf')))
+            t_compute = time.perf_counter() - t_compute_start
+            
+            results['LO'] = {
+                'time': t_compute,
+                'init_time': t_init,
+                'total_time': t_init + t_compute,
+                'data': dict(zip(range(len(query_results)), query_results)),
+                'color': '#95E1D3',
+                'queries': len(query_pairs),
+                'avg_time_per_query': t_compute / len(query_pairs)
+            }
+            st.success(f'Level Order: {t_compute:.4f}s ({t_compute/len(query_pairs)*1000:.2f}ms per query, Init: {t_init:.4f}s)')
+    
+    # Parallel Local Worklist
+    if run_lw:
+        with st.spinner('Running Parallel GPU (Local Worklist)...'):
+            t_init_start = time.perf_counter()
+            solver_lw = ParallelESDG_LW(esd_graph)
+            t_init = time.perf_counter() - t_init_start
+            
+            t_compute_start = time.perf_counter()
+            query_results = []
+            for src, dst in query_pairs:
+                res, _ = solver_lw.find_fastest_paths(src, reconstruct_paths=False)
+                query_results.append(res.get(dst, float('inf')))
+            t_compute = time.perf_counter() - t_compute_start
+            
+            results['LW'] = {
+                'time': t_compute,
+                'init_time': t_init,
+                'total_time': t_init + t_compute,
+                'data': dict(zip(range(len(query_results)), query_results)),
+                'color': '#A8E6CF',
+                'queries': len(query_pairs),
+                'avg_time_per_query': t_compute / len(query_pairs)
+            }
+            st.success(f'Local Worklist: {t_compute:.4f}s ({t_compute/len(query_pairs)*1000:.2f}ms per query, Init: {t_init:.4f}s)')
+    
+    return results
+
 def main():
     # Header
     st.title('HPC Project')
@@ -498,6 +620,28 @@ def main():
         run_mbfs = st.checkbox('Parallel MBFS (Algo 1)', value=True)
         run_lw = st.checkbox('Parallel Local Worklist (Algo 2)', value=True)
         run_lo = st.checkbox('Parallel Level Order (Algo 3)', value=True)
+        
+        st.divider()
+        
+        # Benchmark mode selection
+        st.subheader('Benchmark Mode')
+        benchmark_mode = st.radio(
+            'Query Type:',
+            ['Single Source -> All Destinations', 'Multiple Sources -> Multiple Destinations'],
+            help='Choose whether to benchmark single-source or multi-source pathfinding'
+        )
+        
+        if benchmark_mode == 'Multiple Sources -> Multiple Destinations':
+            num_queries = st.slider(
+                'Number of Query Pairs',
+                min_value=10,
+                max_value=1000,
+                value=100,
+                step=10,
+                help='Number of random source-destination pairs to query'
+            )
+        else:
+            num_queries = None
         
         st.divider()
         
@@ -671,8 +815,13 @@ def main():
         
         # Step 3: Run Algorithms
         st.header('Algorithm Execution')
-
-        results = run_algorithms(esd_graph, source_vertex, run_serial, run_mbfs, run_lo, run_lw)
+        
+        if benchmark_mode == 'Single Source -> All Destinations':
+            st.info(f"**Computing fastest paths from source vertex {source_vertex} to ALL reachable destinations**")
+            results = run_algorithms(esd_graph, source_vertex, run_serial, run_mbfs, run_lo, run_lw)
+        else:
+            st.info(f"**Computing {num_queries} random source-destination path queries**")
+            results = run_multi_query_benchmark(esd_graph, num_queries, run_serial, run_mbfs, run_lo, run_lw)
         
         if not results:
             st.error('No results to display')
@@ -951,7 +1100,6 @@ def run_custom_path_query():
                     min_value=0,
                     max_value=len(esd_graph.nodes) - 1,
                     value=0,
-                    help="Starting vertex for the path"
                 )
             
             with col2:
@@ -960,7 +1108,6 @@ def run_custom_path_query():
                     min_value=0,
                     max_value=len(esd_graph.nodes) - 1,
                     value=min(100, len(esd_graph.nodes) - 1),
-                    help="Target vertex for the path"
                 )
             
             if st.button("Find Path", type="primary"):
@@ -988,21 +1135,25 @@ def run_custom_path_query():
                             
                             # Detailed path visualization
                             st.subheader("Path Details")
-                            fig_detail = create_path_detail_visualization(
+                            fig_detail, path_df = create_path_detail_visualization(
                                 result['path'],
-                                esd_graph.edge_wait_times,
-                                esd_graph.out_neighbors,
-                                result['cost']
+                                source,
+                                destination
                             )
-                            st.plotly_chart(fig_detail, use_container_width=True)
+                            if fig_detail:
+                                st.plotly_chart(fig_detail, width='stretch')
+                                
+                                # Display path details table
+                                st.dataframe(path_df, width='stretch')
                             
                             # Conflict visualization
                             st.subheader("Traffic Analysis")
                             col1, col2 = st.columns(2)
                             
                             with col1:
-                                fig_conflicts = create_conflict_visualization(results, esd_graph)
-                                st.plotly_chart(fig_conflicts, use_container_width=True)
+                                fig_conflicts = create_conflict_visualization(results)
+                                if fig_conflicts:
+                                    st.plotly_chart(fig_conflicts, width='stretch')
                             
                             with col2:
                                 st.markdown("**Global Conflict Statistics**")
@@ -1015,7 +1166,7 @@ def run_custom_path_query():
                             
                             # Path reconstruction
                             st.subheader("Path Sequence")
-                            path_str = " → ".join(str(v) for v in result['path'])
+                            path_str = " -> ".join(str(v) for v in result['path'])
                             st.code(path_str, language=None)
                         else:
                             st.warning("No path found")
@@ -1088,18 +1239,18 @@ def run_custom_path_query():
                         
                         with tab1:
                             fig_heatmap = create_cost_heatmap(results)
-                            st.plotly_chart(fig_heatmap, use_container_width=True)
+                            st.plotly_chart(fig_heatmap, width='stretch')
                         
                         with tab2:
                             fig_network = create_multi_path_network(results, esd_graph)
-                            st.plotly_chart(fig_network, use_container_width=True)
+                            st.plotly_chart(fig_network, width='stretch')
                         
                         with tab3:
                             display_path_comparison_table(results)
                         
                         with tab4:
                             fig_edges = create_edge_usage_chart(results)
-                            st.plotly_chart(fig_edges, use_container_width=True)
+                            st.plotly_chart(fig_edges, width='stretch')
                         
                         # Global statistics
                         st.subheader("Global Conflict Statistics")
@@ -1127,7 +1278,7 @@ def run_custom_path_query():
                             'cost': r['cost'],
                             'conflicts': r['conflicts'],
                             'path_length': len(r['path']),
-                            'path': '→'.join(map(str, r['path']))
+                            'path': '->'.join(map(str, r['path']))
                         } for r in results])
                         
                         csv = results_df.to_csv(index=False)
